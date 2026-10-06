@@ -32,6 +32,11 @@ public class ThreadPoolConfig {
         return executor("LLM-Thread-", 4, 8, 20);
     }
 
+    @Bean("documentTaskExecutor")
+    public ThreadPoolTaskExecutor documentTaskExecutor() {
+        return executor("Document-Thread-", 2, 4, 40);
+    }
+
     private ThreadPoolTaskExecutor executor(String prefix, int coreSize, int maxSize, int queueCapacity) {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
         executor.setCorePoolSize(coreSize);

@@ -109,6 +109,11 @@ public class MinioUtils {
         }
     }
 
+    public void copyManagedFileTo(String fileUrl, OutputStream outputStream) {
+        if (!isManagedFile(fileUrl)) throw new IllegalArgumentException("file is not managed by MinIO");
+        copyObjectTo(objectName(fileUrl), outputStream);
+    }
+
     public void removeFile(String fileUrl) {
         if (fileUrl == null || fileUrl.isBlank()) return;
         if (!isManagedFile(fileUrl)) return;

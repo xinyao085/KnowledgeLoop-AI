@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.example.server.dto.VideoChunk;
+import com.example.server.entity.DocumentChunk;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -141,6 +142,76 @@ public class QdrantVectorStore {
         }
     }
 
+    public void upsertDocument(Long documentId, List<DocumentVector> chunks) {
+        if (!enabled || chunks.isEmpty()) return;
+        List<DocumentVector> vectorized = chunks.stream().filter(item -> !item.embedding().isEmpty()).toList();
+        if (vectorized.isEmpty()) return;
+        ensureCollection(vectorized.get(0).embedding().size());
+        JSONArray points = new JSONArray();
+        for (DocumentVector item : vectorized) {
+            JSONObject payload = new JSONObject();
+            payload.put("documentId", documentId);
+            payload.put("chunkKey", item.chunk().getChunkKey());
+            JSONObject point = new JSONObject();
+            point.put("id", UUID.nameUUIDFromBytes(("document:" + documentId + ":" + item.chunk().getChunkKey())
+                    .getBytes(StandardCharsets.UTF_8)).toString());
+            point.put("vector", item.embedding());
+            point.put("payload", payload);
+            points.add(point);
+        }
+        JSONObject body = new JSONObject();
+        body.put("points", points);
+        execute(request(baseUrl + "/collections/" + collection + "/points?wait=true")
+                .put(RequestBody.create(body.toString(), JSON_MEDIA_TYPE)));
+    }
+
+    public List<DocumentVectorHit> searchDocument(Long documentId, List<Double> queryEmbedding, int limit) {
+        if (!enabled || queryEmbedding.isEmpty()) return List.of();
+        ensureCollection(queryEmbedding.size());
+        JSONObject match = new JSONObject();
+        match.put("value", documentId);
+        JSONObject condition = new JSONObject();
+        condition.put("key", "documentId");
+        condition.put("match", match);
+        JSONObject filter = new JSONObject();
+        filter.put("must", List.of(condition));
+        JSONObject body = new JSONObject();
+        body.put("query", queryEmbedding);
+        body.put("filter", filter);
+        body.put("limit", limit);
+        body.put("with_payload", true);
+        JSONObject result = JSON.parseObject(execute(request(baseUrl + "/collections/" + collection + "/points/query")
+                .post(RequestBody.create(body.toString(), JSON_MEDIA_TYPE)))).getJSONObject("result");
+        JSONArray points = result == null ? null : result.getJSONArray("points");
+        if (points == null) return List.of();
+        List<DocumentVectorHit> hits = new ArrayList<>();
+        for (int i = 0; i < points.size(); i++) {
+            JSONObject point = points.getJSONObject(i);
+            JSONObject payload = point.getJSONObject("payload");
+            if (payload != null) hits.add(new DocumentVectorHit(payload.getString("chunkKey"), point.getDoubleValue("score")));
+        }
+        return hits;
+    }
+
+    public void deleteDocument(Long documentId) {
+        if (!enabled) return;
+        try {
+            JSONObject match = new JSONObject();
+            match.put("value", documentId);
+            JSONObject condition = new JSONObject();
+            condition.put("key", "documentId");
+            condition.put("match", match);
+            JSONObject filter = new JSONObject();
+            filter.put("must", List.of(condition));
+            JSONObject body = new JSONObject();
+            body.put("filter", filter);
+            execute(request(baseUrl + "/collections/" + collection + "/points/delete?wait=true")
+                    .post(RequestBody.create(body.toString(), JSON_MEDIA_TYPE)));
+        } catch (RuntimeException e) {
+            log.warn("qdrant_document_cleanup_failed documentId={}", documentId, e);
+        }
+    }
+
     private void ensureCollection(int vectorSize) {
         if (collectionReady.get()) return;
         synchronized (collectionReady) {
@@ -197,4 +268,7 @@ public class QdrantVectorStore {
 
     public record VectorHit(long startMs, long endMs, double score) {
     }
+
+    public record DocumentVector(DocumentChunk chunk, List<Double> embedding) { }
+    public record DocumentVectorHit(String chunkKey, double score) { }
 }

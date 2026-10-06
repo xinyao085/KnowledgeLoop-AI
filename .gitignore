@@ -12,4 +12,6 @@ mysql/logs/
 redis/data/
 qdrant/data/
 minio/data/
+data/document-uploads/
+server/data/document-uploads/
  

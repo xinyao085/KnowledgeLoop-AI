@@ -1,4 +1,58 @@
 services:
+  server:
+    build:
+      context: ./server
+    ports:
+      - "127.0.0.1:9090:9090"
+    environment:
+      SERVER_ADDRESS: 0.0.0.0
+      DOCUMENT_UPLOAD_DIRECTORY: /app/data/document-uploads
+      DB_URL: jdbc:mysql://mysql:3306/media_db?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf-8&allowPublicKeyRetrieval=true
+      DB_USERNAME: ${DB_USERNAME:?DB_USERNAME is required}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY is required}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
+      MINIO_BUCKET: ${MINIO_BUCKET:-media}
+      QDRANT_ENABLED: ${QDRANT_ENABLED:-true}
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY is required}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-video_chunks}
+      ROCKETMQ_NAME_SERVER: rmqnamesrv:9876
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-v4-pro}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://api.siliconflow.cn/v1}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+    volumes:
+      - document-uploads:/app/data/document-uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      qdrant:
+        condition: service_started
+      rmqbroker:
+        condition: service_started
+
+  client:
+    build:
+      context: ./client
+    ports:
+      - "127.0.0.1:5173:80"
+    depends_on:
+      server:
+        condition: service_started
+
   mysql:
     image: mysql:8.0
     ports:
@@ -11,7 +65,7 @@ services:
       TZ: Asia/Shanghai
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     volumes:
-      - ./mysql/data:/var/lib/mysql
+      - mysql-data:/var/lib/mysql
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 5s
@@ -27,7 +81,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
     volumes:
-      - ./redis/data:/data
+      - redis-data:/data
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 5s
@@ -41,10 +95,13 @@ services:
     environment:
       QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:?QDRANT_API_KEY is required}
     volumes:
-      - ./qdrant/data:/qdrant/storage
+      - qdrant-data:/qdrant/storage
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    # Upstream removed the Docker Hub repository and some networks receive 401s
+    # from Quay. This pinned community mirror is a drop-in build of the same
+    # release and publishes both amd64 and arm64 manifests.
+    image: satantime/minio-server:RELEASE.2025-09-07T16-13-09Z
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
@@ -53,7 +110,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY is required}
     command: server /data --console-address ":9001"
     volumes:
-      - ./minio/data:/data
+      - minio-data:/data
 
   rmqnamesrv:
     image: apache/rocketmq:5.3.4
@@ -65,22 +122,41 @@ services:
 
   rmqbroker:
     image: apache/rocketmq:5.3.4
+    user: root
     ports:
       - "127.0.0.1:10911:10911"
       - "127.0.0.1:10909:10909"
     environment:
       NAMESRV_ADDR: rmqnamesrv:9876
-      BROKER_ID: 0
-      BROKER_ROLE: ASYNC_MASTER
       JAVA_OPT_EXT: -server -Xms256m -Xmx256m -Xmn128m
     volumes:
-      - ./rocketmq/broker.conf:/home/rocketmq/broker.conf:ro
       - rocketmq-store:/home/rocketmq/store
       - rocketmq-logs:/home/rocketmq/logs
-    command: sh mqbroker -n rmqnamesrv:9876 -c /home/rocketmq/broker.conf
+    command:
+      - sh
+      - -c
+      - |
+        chown -R rocketmq:rocketmq /home/rocketmq/store /home/rocketmq/logs
+        printf '%s\n' \
+          'brokerClusterName = DefaultCluster' \
+          'brokerName = broker-a' \
+          'brokerId = 0' \
+          'deleteWhen = 04' \
+          'fileReservedTime = 48' \
+          'brokerRole = ASYNC_MASTER' \
+          'flushDiskType = ASYNC_FLUSH' \
+          'autoCreateTopicEnable = true' \
+          'brokerIP1 = 127.0.0.1' > /tmp/broker.conf
+        chown rocketmq:rocketmq /tmp/broker.conf
+        exec runuser -u rocketmq -- sh mqbroker -n rmqnamesrv:9876 -c /tmp/broker.conf
     depends_on:
       - rmqnamesrv
 
 volumes:
+  document-uploads:
+  mysql-data:
+  redis-data:
+  qdrant-data:
+  minio-data:
   rocketmq-store:
   rocketmq-logs:

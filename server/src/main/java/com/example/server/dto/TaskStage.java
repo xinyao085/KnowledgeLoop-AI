@@ -28,7 +28,14 @@ public enum TaskStage {
     REVISION_APPLIED,
     TRANSCRIPTION,
     ASR,
-    DISPATCH_FAILED;
+    DISPATCH_FAILED,
+    PLANNING,
+    RETRIEVING,
+    GENERATING,
+    CRITIQUING,
+    WAITING_FOR_ANSWER,
+    EVALUATING,
+    REPLANNING;
 
     public static TaskStage from(String value) {
         if (value == null || value.isBlank()) return null;

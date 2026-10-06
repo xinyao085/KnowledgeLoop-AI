@@ -1,5 +1,5 @@
 <div align="center">
-  <h2>DoVideoAI</h2>
+  <h2>KnowledgeLoop</h2>
   
   <p>
     <a href="https://github.com/Xiaoc7r/DOVideo-AI/stargazers"><img src="https://img.shields.io/github/stars/Xiaoc7r/DOVideo-AI?style=flat-square" alt="GitHub Stars"></a>
@@ -16,12 +16,14 @@
 
 <div align="center">
 
-面向长视频内容理解的 <strong>Video Agent</strong>。
+面向长文档深度学习的 <strong>Learning Agent</strong>。
 
-致力于将长视频转化为可检索、可追溯、可继续追问的结构化知识。
+致力于将 PDF、Markdown 和文本教材转化为可检索、可追溯、可持续学习的结构化知识。
 
 
 </div>
+
+> 当前迁移进度：已建立独立文档领域模型、异步解析、结构化分块、Embedding/Qdrant 混合检索、带原文引用的 Learning Agent 学习与答题闭环，以及 KnowledgeLoop 文档工作台；原有视频服务暂时保留用于兼容历史代码。DOCX、PPTX 与扫描 PDF OCR 将按设计文档的后续阶段继续接入。
 
 ## 项目预览
 
@@ -48,6 +50,8 @@
 用户完成登录后，可以上传视频并在工作台管理解析任务；选择视频并输入分析目标后，可以手动选择分析模式，也可以交给 Agent 自动判断。工作台会展示结构化结论、时间戳证据、执行计划、阶段轨迹与质量评估，并支持基于同一视频继续追问。
 
 ## 核心功能
+
+文档上传支持内容指纹校验、5 MiB 分片、暂停后续传与合并幂等，详见[文档断点续传实现说明](docs/document-resumable-upload.md)。
 
 长视频处理天然是**长耗时、高资源消耗、外部调用成本敏感**的场景。DoVideoAI 的设计都围绕这一背景展开，可以概括为四层能力。
 
@@ -256,3 +260,23 @@ DoVideoAI
 ## License
 
 本项目基于 [MIT License](LICENSE) 开源。
+
+
+### 文档学习双层 Agent Loop
+
+学习会话通过 `POST /learning/sessions` 创建，通过 `/{id}/answers` 评估答案，
+再通过 `/{id}/next` 执行已选择的教学动作。下一轮必须在当前测验完成后生成。
+
+- Planner 保存有序知识点路径；Tutor 接收计划、上轮诊断和上轮讲解。
+- 内层 Critic 同时检查目标覆盖、语义依据和引用真实性。服务端核验 documentId、chunkId
+  与逐字原文，最多进行三轮生成/修复。仍失败时只展示原文摘录，明确标记 FALLBACK。
+- 外层按用户、文档、稳定知识点键读取及更新掌握度。充分正确加 0.30，基本正确加 0.15，
+  概念错误减 0.20，其他错误减 0.10，结果限制在 0–1；不接受模型自行指定的掌握度或完成动作。
+- 未达到 0.80 时重讲；基础缺失时选择未掌握的前置知识，补完后返回原知识点。
+  前置补充最多嵌套三层，并避免返回链中的循环。达到阈值后才推进路径，路径及返回链均完成才结束。
+- 路径、前置返回链和最新计划保存在现有 state_json 中，无需新增数据库迁移。
+  旧会话没有路径字段时仍可读取，按原当前知识点继续学习。
+- FALLBACK 中的规则评分只做文本重合匹配，不能替代模型的语义诊断。
+
+回归验证（JDK 21）：`cd server && ./mvnw -Dtest=LearningLoopPolicyTest,LearningSessionServiceTest test`。
+此处“自进化”指根据测验反馈调整学习状态和教学策略，不包含模型参数训练。

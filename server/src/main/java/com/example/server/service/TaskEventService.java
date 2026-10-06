@@ -26,6 +26,7 @@ public class TaskEventService implements MessageListener {
 
     public static final String ANALYSIS = "analysis";
     public static final String TRANSCRIPTION = "transcription";
+    public static final String LEARNING = "learning";
     public static final String REDIS_CHANNEL = "dovideo:task-events";
 
     private static final Logger log = LoggerFactory.getLogger(TaskEventService.class);
@@ -79,6 +80,14 @@ public class TaskEventService implements MessageListener {
 
     public void publishTranscription(Long mediaId, TaskStatus status, TaskStage stage) {
         publish(key(mediaId, TRANSCRIPTION, "", AnalysisMode.GENERAL), TaskEvent.of(status, stage));
+    }
+
+    public SseEmitter subscribeLearning(Long sessionId, TaskStatus initialStatus, TaskStage stage) {
+        return subscribe(sessionId, LEARNING, "", initialStatus, stage);
+    }
+
+    public void publishLearning(Long sessionId, TaskStatus status, TaskStage stage) {
+        publish(key(sessionId, LEARNING, "", AnalysisMode.GENERAL), TaskEvent.of(status, stage));
     }
 
     private void publish(String key, TaskEvent event) {

@@ -27,8 +27,8 @@ public class EmbeddingUtils {
             .readTimeout(120, TimeUnit.SECONDS)
             .build();
 
-    public EmbeddingUtils(@Value("${ai.deepseek.api-key}") String apiKey,
-                          @Value("${ai.deepseek.base-url}") String baseUrl,
+    public EmbeddingUtils(@Value("${ai.embedding.api-key}") String apiKey,
+                          @Value("${ai.embedding.base-url}") String baseUrl,
                           @Value("${ai.embedding.model:BAAI/bge-m3}") String model) {
         this.apiKey = apiKey;
         this.baseUrl = baseUrl.replaceAll("/+$", "");
@@ -37,6 +37,7 @@ public class EmbeddingUtils {
 
     public List<Double> embed(String text) {
         if (text == null || text.isBlank()) return List.of();
+        if (apiKey == null || apiKey.isBlank()) throw new IllegalStateException("Embedding API key is not configured");
         try {
             JSONObject requestJson = new JSONObject();
             requestJson.put("model", model);
