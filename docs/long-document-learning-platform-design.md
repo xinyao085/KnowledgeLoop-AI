@@ -3,11 +3,11 @@
 > 文档状态：Draft  
 > 版本：v1.0  
 > 日期：2026-09-26  
-> 基础项目：DoVideoAI
+> 基础能力：现有视频分析模块
 
 ## 1. 文档目的
 
-本文档描述如何在尽可能复用 DoVideoAI 现有技术栈和工程能力的前提下，将产品演进为 **KnowledgeLoop——异步长文档学习平台**。
+本文档描述如何在尽可能复用现有技术栈和工程能力的前提下，将产品演进为 **KnowledgeLoop——异步长文档学习平台**。
 
 目标平台支持用户上传大型 PDF、PPTX、DOCX、TXT 和 Markdown 文件，异步完成内容解析、结构化分块和向量索引，并通过 Learning Agent 为用户提供：
 
@@ -31,7 +31,7 @@ RAG 是平台检索教材内容的底层能力，不是产品定位。产品闭�
 5. OCR、解析和向量化属于长耗时任务，需要异步执行与断点恢复；
 6. 学习过程横跨多次请求甚至多天，不能依赖单个长时间运行的服务线程。
 
-DoVideoAI 已经具备分片上传、MinIO、RocketMQ、Redis、MySQL、Qdrant、SSE、Checkpoint、限流以及 Planner—Executor—Critic 编排，因此适合采用渐进式改造，而不是推翻重写。
+KnowledgeLoop 已经具备分片上传、MinIO、RocketMQ、Redis、MySQL、Qdrant、SSE、Checkpoint、限流以及 Planner—Executor—Critic 编排，因此适合采用渐进式改造，而不是推翻重写。
 
 ## 3. 产品目标与非目标
 

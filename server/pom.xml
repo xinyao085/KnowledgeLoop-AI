@@ -144,7 +144,7 @@
 							<rules>
 								<requireJavaVersion>
 									<version>[21,)</version>
-									<message>DoVideoAI backend requires JDK 21 or newer.</message>
+									<message>KnowledgeLoop backend requires JDK 21 or newer.</message>
 								</requireJavaVersion>
 							</rules>
 						</configuration>
