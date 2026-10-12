@@ -69,6 +69,18 @@ QUEUED → EXTRACTING → CHUNKING → EMBEDDING → READY
 ## 系统流程
 
 ```mermaid
+flowchart LR
+    A[上传文档<br/>分片校验与存储] --> B[解析与索引<br/>文本提取 · 分块 · 向量]
+    B --> C[证据教学<br/>规划 · 检索 · 讲解 · 核验]
+    C --> D[测验与诊断<br/>更新掌握度]
+    D -->|重讲 / 补基础 / 推进| C
+    D --> E[学习记录<br/>看板 · 复习 · 错题]
+```
+
+<details>
+<summary>展开完整系统流程</summary>
+
+```mermaid
 flowchart TD
     U[上传文档] --> P[5 MiB 分片 / 指纹校验 / 合并]
     P --> S[MinIO 原文件 + MySQL 文档记录]
@@ -90,6 +102,8 @@ flowchart TD
     ST -->|重讲 / 补前置 / 推进| PL
     ST --> D[学习看板 / 知识地图 / 复习 / 错题]
 ```
+
+</details>
 
 文档解析状态通过 SSE 推送至工作台。MySQL 保存业务记录、分块、上传会话和学习状态，Redis 用于缓存、锁及相关任务事件能力。
 
