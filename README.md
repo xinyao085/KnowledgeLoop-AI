@@ -17,6 +17,63 @@ KnowledgeLoop 以文档原文为依据，帮助用户从“读过材料”走向
 
 当前前端为文档学习工作台，包含我的文档、今日学习、知识地图、待复习和错题本。后端保留原 DoVideoAI 视频分析模块，作为历史兼容能力；本文以当前文档学习功能为主。
 
+## 项目预览
+
+以下截图展示一次实际的文档学习过程：上传教材、生成教学材料、诊断答案，再根据掌握度继续巩固。
+
+**文档工作台**
+
+上传教材，查看文档状态并进入学习。
+
+<p align="center">
+  <a href="docs/images/document-workspace.png"><img src="docs/images/document-workspace.png" alt="KnowledgeLoop 文档工作台与教材上传入口" width="760"></a>
+</p>
+
+**Learning Agent 执行轨迹**
+
+展示 Planner、Retriever、Tutor 和 Critic 的学习规划、原文检索、教学生成与证据核验过程。
+
+<p align="center">
+  <a href="docs/images/learning-agent-trace.png"><img src="docs/images/learning-agent-trace.png" alt="Learning Agent 学习规划、检索、讲解与校验轨迹" width="760"></a>
+</p>
+
+**答案诊断与重讲**
+
+回答不完整时，指出遗漏内容、标记错误类型，并提供换一种方式讲解的入口。
+
+<p align="center">
+  <a href="docs/images/learning-answer-feedback.png"><img src="docs/images/learning-answer-feedback.png" alt="测验评分、答案不完整诊断与重讲入口" width="760"></a>
+</p>
+
+**掌握度更新与下一步决策**
+
+回答正确后更新掌握度。示例中掌握度为 30%，尚未达到 80% 阈值，因此继续巩固当前知识点。
+
+<p align="center">
+  <a href="docs/images/learning-mastery-progress.png"><img src="docs/images/learning-mastery-progress.png" alt="正确回答后的掌握度更新及继续巩固决策" width="760"></a>
+</p>
+
+<details>
+<summary>查看更多：原文依据、测验与正确回答反馈</summary>
+
+**原文依据与掌握检查**
+
+展示带页码的教材摘录与 Agent 生成的简答题。
+
+<p align="center">
+  <a href="docs/images/learning-quiz.png"><img src="docs/images/learning-quiz.png" alt="教材原文摘录、页码与掌握检查测验" width="760"></a>
+</p>
+
+**正确回答反馈**
+
+测验评分与知识点掌握度分别记录；单次获得 100 分后，仍可能需要继续巩固以达到掌握阈值。
+
+<p align="center">
+  <a href="docs/images/learning-correct-answer.png"><img src="docs/images/learning-correct-answer.png" alt="正确回答获得 100 分后的诊断反馈" width="760"></a>
+</p>
+
+</details>
+
 ## 核心功能
 
 ### 文档接入与结构化解析
@@ -289,7 +346,7 @@ cd server
 
 - DOCX 当前提取正文段落，PPTX 当前提取文本形状；复杂表格、图片和版式没有完整还原。
 - PDF OCR 为低文本页的补充识别，结果受扫描质量和语言包影响。
-- 仓库中的界面截图主要来自历史视频工作台，未作为当前文档界面的预览展示；当前 `App.vue` 未接入旧版 `?demo` 工作台。
+- 项目预览使用当前文档学习工作台的实际截图；`docs/images/` 中也保留了历史视频界面素材。当前 `App.vue` 未接入旧版 `?demo` 工作台。
 - 视频模块保留分片上传、FFmpeg/ASR/OCR、多模态上下文、混合检索及视频 AgentLoop。运行该链路需另外准备 FFmpeg，在线视频解析还需 yt-dlp；当前后端镜像未安装这些工具。
 - Compose Broker 当前向客户端通告 `127.0.0.1`，与后端同在容器内运行时需留意 RocketMQ 客户端连接日志；容器内任务投递失败会触发本地异步降级。要验证完整 MQ 链路，可使用本地后端连接中间件，或按部署网络调整 Broker 通告地址。
 
