@@ -1,282 +1,311 @@
 <div align="center">
-  <h2>KnowledgeLoop</h2>
-  
+  <h1>KnowledgeLoop</h1>
+  <p><strong>面向长文档深度学习的 Learning Agent</strong></p>
   <p>
-    <a href="https://github.com/Xiaoc7r/DOVideo-AI/stargazers"><img src="https://img.shields.io/github/stars/Xiaoc7r/DOVideo-AI?style=flat-square" alt="GitHub Stars"></a>
     <img src="https://img.shields.io/badge/Java-21-E76F00?style=flat-square" alt="Java 21">
     <img src="https://img.shields.io/badge/Spring%20Boot-3.5.9-6DB33F?style=flat-square" alt="Spring Boot 3.5.9">
     <img src="https://img.shields.io/badge/Vue-3-42B883?style=flat-square" alt="Vue 3">
-    <img src="https://img.shields.io/badge/MySQL-8-4479A1?style=flat-square" alt="MySQL 8">
-    <img src="https://img.shields.io/badge/Redis-7-DC382D?style=flat-square" alt="Redis 7">
-    <img src="https://img.shields.io/badge/RocketMQ-5.3.4-D77310?style=flat-square" alt="RocketMQ 5.3.4">
-    <img src="https://img.shields.io/badge/LangChain4j-Agent-20232A?style=flat-square" alt="LangChain4j">
+    <img src="https://img.shields.io/badge/LangChain4j-1.16.3-20232A?style=flat-square" alt="LangChain4j 1.16.3">
     <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="MIT License"></a>
   </p>
+  <p>将教材、论文和讲义转化为可检索、可追溯的学习材料，<br>通过讲解、测验、诊断与复习形成持续学习闭环。</p>
 </div>
 
-<div align="center">
+## 项目介绍
 
-面向长文档深度学习的 <strong>Learning Agent</strong>。
+KnowledgeLoop 以文档原文为依据，帮助用户从“读过材料”走向“掌握知识”。上传文档并设置学习目标后，Agent 制定知识点路径、检索证据、生成讲解和测验，再根据答案决定重讲、补充前置知识或推进学习。
 
-致力于将 PDF、Markdown 和文本教材转化为可检索、可追溯、可持续学习的结构化知识。
-
-
-</div>
-
-> 当前迁移进度：已建立独立文档领域模型、异步解析、结构化分块、Embedding/Qdrant 混合检索、带原文引用的 Learning Agent 学习与答题闭环，以及 KnowledgeLoop 文档工作台；原有视频服务暂时保留用于兼容历史代码。DOCX、PPTX 与扫描 PDF OCR 将按设计文档的后续阶段继续接入。
-
-## 项目预览
-
-**登录与注册**
-
-![DoVideoAI 登录与注册](docs/images/login-register.png)
-
-**视频工作台**
-
-![DoVideoAI 视频工作台](docs/images/video-library.png)
-
-**Agent 目标输入**
-
-![DoVideoAI Agent 目标输入](docs/images/agent-compose.png)
-
-**Agent 分析结果**
-
-<img width="2886" height="1656" alt="b89cf519f7189cf823507d5c17b0d88d" src="https://github.com/user-attachments/assets/8bfeed0e-28df-4527-86bf-e549f5516dcc" />
-
-<img width="1776" height="1708" alt="a52abccc6447591c6f9a66ad948c5709" src="https://github.com/user-attachments/assets/9e04ecca-a2a5-4d59-89d7-8f4329858070" />
-
-
-
-用户完成登录后，可以上传视频并在工作台管理解析任务；选择视频并输入分析目标后，可以手动选择分析模式，也可以交给 Agent 自动判断。工作台会展示结构化结论、时间戳证据、执行计划、阶段轨迹与质量评估，并支持基于同一视频继续追问。
+当前前端为文档学习工作台，包含我的文档、今日学习、知识地图、待复习和错题本。后端保留原 DoVideoAI 视频分析模块，作为历史兼容能力；本文以当前文档学习功能为主。
 
 ## 核心功能
 
-文档上传支持内容指纹校验、5 MiB 分片、暂停后续传与合并幂等，详见[文档断点续传实现说明](docs/document-resumable-upload.md)。
+### 文档接入与结构化解析
 
-长视频处理天然是**长耗时、高资源消耗、外部调用成本敏感**的场景。DoVideoAI 的设计都围绕这一背景展开，可以概括为四层能力。
+- **多格式解析**：支持 PDF、Markdown、TXT、DOCX 和 PPTX，保留页码、标题路径、幻灯片编号、段落或行号等定位信息。
+- **PDF OCR 补充**：对提取文本少于 40 个字符的页面尝试 Tesseract 中英文 OCR；OCR 不可用时保留已有文本，完全无可提取文本的文档会解析失败。
+- **断点续传**：前端按 5 MiB 分片，支持暂停后续传、上传状态查询、内容指纹校验和合并幂等。上传会话持久化在 MySQL，分片保存在后端本地目录，原文件存入 MinIO。
+- **异步处理**：上传完成后返回 `202 Accepted`，经 RocketMQ 投递解析任务；投递失败时回退到本地异步处理。
+- **进度与恢复**：通过 SSE 展示解析进度，持久化阶段 Checkpoint；已有分块时可跳过重复解析并重建索引。
 
-### 🎬 可靠的视频任务链路
-
-> 把大文件上传与耗时的视频解析从请求主链路中剥离，提交即返回，不阻塞、不重复烧钱。
-
-- **分片上传 + 断点续传** — 前端按 5 MB 分片，Redis 记录已完成分片，MinIO 保存合并后的视频，弱网中断后可从断点续传。
-- **异步削峰** — RocketMQ 将视频解析移出请求线程，提交后立即返回任务 ID；Redisson 按「内容指纹 + 分析目标」加锁，拦截并发与重复消费。
-- **成本护栏** — 用户级与全局令牌桶限制 AI 请求速率；ASR 与模型调用采用有限次数的指数退避重试，兜底第三方网络抖动。
-
-### 🧩 时序多模态 VideoContext
-
-> 把语音、画面文字与时间戳融合成一份可检索、可校验的统一上下文。
-
-- **双分支抽取** — FFmpeg 将音频按 60 秒切片，同时通过场景变化检测抽取关键帧，并以 30 秒保底采样避免遗漏静态板书。
-- **并行与容错** — ASR 与 OCR 使用独立有界线程池并行执行；相邻画面通过感知哈希去重，单路失败时仍保留另一条有效信息。
-- **统一结构** — 语音区间、OCR 文本、关键帧与时间戳被合并为统一的 `VideoSegment`，后续检索与校验不再依赖底层模型格式。
+解析状态：
 
 ```text
-[02:00 - 03:00]
-ASR      接下来讲解二叉树的前序遍历
-OCR      前序遍历：根节点、左子树、右子树
-Evidence frame_000125.jpg
+QUEUED → EXTRACTING → CHUNKING → EMBEDDING → READY
+                                           └→ READY_WITH_WARNINGS（关键词检索降级）
+处理异常 → FAILED
 ```
 
-### 🔁 有证据约束的 AgentLoop
+### 带原文引用的问答
 
-> 每条结论都必须绑定可在原始视频中核验的时间戳证据，拒绝模型自由发挥。
+- **混合检索**：结合关键词匹配与 Embedding/Qdrant 语义召回，选择相关原文分块。
+- **连续追问**：单文档问答支持对话历史，回答附带原文摘录和定位信息，前端可点击引用查看对应分块。
+- **降级机制**：向量服务不可用时继续使用关键词检索；模型不可用或生成失败时返回 `FALLBACK` 原文证据。
+- **课程接口**：后端提供课程创建、文档关联查询与跨文档问答接口，当前前端主要围绕单文档学习展开。
 
-- **角色分工** — Planner 将用户目标拆成可执行任务，Executor 生成固定结构的结论、证据与建议。
-- **闭环校验** — Critic 检查目标覆盖、结构完整性与时间戳证据；不通过时依据缺失内容和时间范围定向重新检索。
-- **自动模式路由** — 根据用户目标自动选择通用、学习、审查或创作模式；路由不可用时回退通用模式，不阻断分析任务。
-- **四类结构化产物** — 通用模式生成结论与建议，学习模式生成大纲、自测题与易错点，审查模式定位逻辑漏洞与存疑结论，创作模式提取爆点、标题与口播脚本。
-- **成本可控** — AgentLoop 最多执行两轮，既允许定向修正，也通过轮次上限约束延迟与 Token 成本。
+### 双层 Learning Agent Loop
 
-### 🔍 长视频检索与断点恢复
+**内层负责教学质量：Planner → Retriever → Tutor → Critic。** Planner 保存有序知识点路径，Tutor 根据计划、原文证据和上轮诊断生成讲解与测验。Critic 检查目标覆盖和语义依据，服务端进一步核验 `documentId`、`chunkId` 及逐字原文引用；最多进行三轮生成/修复，仍不通过时回退到原文摘录并标记 `FALLBACK`。
 
-> 面向数小时长视频的分段检索，以及分阶段可恢复的任务状态机。
+**外层负责学习推进：回答 → Evaluator → 掌握度更新 → 下一步教学。** 掌握度按用户、文档和稳定知识点键保存，由服务端规则约束，模型不能直接指定最终掌握度或完成动作。
 
-- **混合检索** — 每 5 分钟生成片段摘要、关键词与 Embedding，通过关键词匹配与 Qdrant 语义召回选出 TopK 原始证据。
-- **优雅降级** — Qdrant 或 Embedding 服务不可用时，退化到本地关键词与已有向量排序，不阻断主分析链路。
-- **断点恢复** — Checkpoint 以 MySQL 为恢复真源、Redis 为热缓存，持久化 `VideoContext`、分块、计划、Critic 状态与最终结果。
-- **状态可观测** — 前端通过 SSE 接收任务阶段；失败消息写入独立失败主题与失败任务表，可由管理接口重新投递。
+| 诊断结果 | 掌握度变化 |
+| :--- | :--- |
+| 回答正确且评分 ≥ 0.80 | +0.30 |
+| 回答正确且评分 ≥ 0.60、< 0.80 | +0.15 |
+| 概念错误 | −0.20 |
+| 其他错误 | −0.10 |
+
+掌握度限制在 0–1。回答正确且掌握度达到 0.80 后才能推进知识点；未达标时重讲，前置知识缺失时优先补基础，完成后返回原知识点。前置补充最多嵌套三层并避免循环，知识点路径及返回链完成后才结束会话。当前测验完成后才能生成下一轮，答案提交使用会话版本和幂等键控制重复请求。
+
+这里的“自进化”指根据测验反馈调整学习状态与教学策略，不涉及模型参数训练。`FALLBACK` 下的规则评分基于文本重合，不能替代模型的语义诊断。
+
+### 学习工作台
+
+- 文档列表、搜索、上传进度、后台处理状态与结构化原文阅读。
+- 学习目标输入、Agent 执行轨迹、讲解、教材证据、测验和掌握度反馈。
+- 今日学习统计、知识地图、待复习条目和错题本。
+- 用户注册与登录，以及按用户归属校验文档和学习会话访问。
 
 ## 系统流程
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor User as 用户
-    participant Web as Vue 工作台
-    participant API as Spring Boot API
-    participant MQ as RocketMQ
-    participant Worker as 分析消费者
-    participant Context as VideoContext
-    participant Search as Qdrant 检索
-    participant Agent as AgentLoop
-    participant State as MySQL + Redis
-
-    User->>Web: 上传视频并填写分析目标
-    Web->>API: 分片上传与合并
-    API->>MQ: 投递视频分析任务
-    API-->>Web: 返回 202 Accepted
-    MQ->>Worker: 异步消费
-    Worker->>State: 查询幂等结果与 Checkpoint
-
-    alt 已存在可恢复结果
-        State-->>Worker: 返回最近成功阶段
-    else 首次解析
-        par 语音分支
-            Worker->>Context: FFmpeg 分段 + ASR
-        and 视觉分支
-            Worker->>Context: 关键帧抽取 + OCR
-        end
-        Context->>State: 保存时序多模态上下文
-    end
-
-    Worker->>Search: 摘要、关键词与 Embedding 混合检索
-    Search-->>Agent: 返回相关原始证据
-    loop Critic 未通过且未达到两轮
-        Agent->>Agent: Planner -> Executor -> Critic
-        Agent->>Search: 按反馈定向补充证据
-    end
-    Agent->>State: 保存结构化结果与 Checkpoint
-    Worker-->>Web: SSE 推送阶段与最终结果
-    Web-->>User: 展示结论、证据与后续追问
+flowchart TD
+    U[上传文档] --> P[5 MiB 分片 / 指纹校验 / 合并]
+    P --> S[MinIO 原文件 + MySQL 文档记录]
+    S --> M[RocketMQ 文档任务]
+    M --> E[文本提取 / PDF OCR]
+    E --> C[结构化分块 + 位置元数据]
+    C --> I[Embedding + Qdrant 索引]
+    C --> K[关键词检索]
+    I --> R[Retriever 原文证据]
+    K --> R
+    G[用户学习目标] --> PL[Planner 知识点路径]
+    PL --> R
+    R --> T[Tutor 讲解与测验]
+    T --> CR[Critic + 服务端引用核验]
+    CR -->|修复，最多三轮| T
+    CR -->|通过或原文降级| A[用户回答]
+    A --> EV[Evaluator 诊断]
+    EV --> ST[服务端更新掌握度与学习状态]
+    ST -->|重讲 / 补前置 / 推进| PL
+    ST --> D[学习看板 / 知识地图 / 复习 / 错题]
 ```
+
+文档解析状态通过 SSE 推送至工作台。MySQL 保存业务记录、分块、上传会话和学习状态，Redis 用于缓存、锁及相关任务事件能力。
 
 ## 技术栈
 
-| 层次 | 技术 | 用途 |
-| :--- | :--- | :--- |
-| Web | Vue 3、Vite、SSE、Marked | 上传、Agent 工作台、实时进度与安全 Markdown 展示 |
-| API | Java 21、Spring Boot 3.5.9、Undertow、MyBatis-Plus | 鉴权、媒体管理、任务编排与 REST API |
-| 异步与缓存 | RocketMQ 5.3.4、Redis 7.4、Redisson | 异步削峰、状态缓存、限流、锁与消费幂等 |
-| 数据与存储 | MySQL 8、MinIO、Qdrant | 业务数据、视频对象、Checkpoint 与向量检索 |
-| 视频与 AI | FFmpeg、Tesseract、LangChain4j、DeepSeek、TeleSpeechASR、BGE-M3 | 音视频处理、多模态解析、Agent 推理与 Embedding |
-| 部署 | Docker Compose | 本地中间件编排 |
+| 层次 | 技术与用途 |
+| :--- | :--- |
+| 前端 | Vue 3、Vite：文档工作台、原文阅读与学习交互 |
+| 后端 | Java 21、Spring Boot 3.5.9、Undertow、MyBatis-Plus |
+| 文档解析 | PDFBox 3.0.4、Apache POI 5.4.1、Tesseract |
+| AI | LangChain4j 1.16.3、OpenAI 兼容模型接口、BGE-M3 Embedding |
+| 数据与存储 | MySQL 8、Flyway、MinIO、Qdrant |
+| 异步与缓存 | RocketMQ 5.3.4、Redis 7.4、Redisson |
+| 部署 | Docker Compose、Nginx；支持容器部署或本地开发 |
 
 ## 本地运行
 
-### 环境要求
-
-| 组件 | 要求 | 说明 |
-| :--- | :--- | :--- |
-| JDK | 21 | 后端运行环境 |
-| Node.js | 22 | Vue 与 Vite 构建环境 |
-| Docker | Compose v2 | 启动 MySQL、Redis、MinIO、Qdrant 与 RocketMQ |
-| FFmpeg | 可在终端调用 | 音频切分与关键帧抽取 |
-| Tesseract | 安装 `chi_sim` 与 `eng` | 中英文关键帧 OCR |
-| yt-dlp | 可选 | 仅解析在线视频链接时需要 |
-
-建议先确认命令均可用：
-
-```bash
-java -version
-node --version
-docker compose version
-ffmpeg -version
-tesseract --version
-```
-
 ### 1. 准备配置
+
+在项目根目录执行：
 
 ```bash
 cp .env.example .env
 ```
 
-编辑 `.env`，至少替换数据库、Redis、MinIO、Qdrant 的示例密码并设置 `SILICONFLOW_API_KEY`。全新数据库中 `DB_USERNAME` 与 `MYSQL_APP_USER` 应保持一致；`MYSQL_ROOT_PASSWORD` 仅供数据库初始化使用。密钥只保存在本地 `.env`，不要提交到仓库。
+替换 `DB_PASSWORD`、`MYSQL_ROOT_PASSWORD`、`REDIS_PASSWORD`、`MINIO_SECRET_KEY` 和 `QDRANT_API_KEY` 的示例值。全新数据库中，`DB_USERNAME` 与 `MYSQL_APP_USER` 应保持一致。
 
-默认 LLM 为 `deepseek-ai/DeepSeek-V3.2`。历史示例模型 `deepseek-ai/DeepSeek-R1-Distill-Qwen-32B` 已被硅基流动禁用，会返回 `Model disabled`。`LLM_TIMEOUT_SECONDS` 默认是 `300`，用于避免长视频证据分析在模型响应尚未返回时过早超时；模型或超时配置变更后需要重启后端。
+模型配置分为 LLM 和 Embedding 两组，密钥、地址和模型名称应与各自服务商匹配：
 
-### 2. 启动中间件
+| 配置 | 说明 |
+| :--- | :--- |
+| `LLM_API_KEY` | 学习规划、讲解、评价和问答使用的模型密钥 |
+| `LLM_BASE_URL` / `LLM_MODEL` | OpenAI 兼容接口地址与模型名称；模板当前分别为 `https://api.deepseek.com`、`deepseek-v4-pro`，请按账号实际可用模型设置 |
+| `EMBEDDING_API_KEY` | 向量模型密钥 |
+| `EMBEDDING_BASE_URL` / `EMBEDDING_MODEL` | 模板为 `https://api.siliconflow.cn/v1`、`BAAI/bge-m3` |
+| `SILICONFLOW_API_KEY` | 历史视频 ASR 使用的密钥；相关模型配置未设置时也可作为后备来源 |
+| `LLM_TIMEOUT_SECONDS` | 单次模型调用超时，默认 300 秒 |
+| `QDRANT_ENABLED` | 是否启用 Qdrant，默认 `true` |
+
+建议显式填写 `LLM_API_KEY` 和 `EMBEDDING_API_KEY`。模板已定义这两个变量为空，不应依赖空字符串自动回退到 `SILICONFLOW_API_KEY`。修改后重启后端；本地密钥不要提交到仓库。
+
+### 2. 选择启动方式
+
+#### 方式 A：Docker Compose
+
+需要 Docker 和 Compose v2。在项目根目录执行：
 
 ```bash
-./scripts/dev-up.sh
+docker compose --env-file .env up --build -d
 ```
 
-脚本会检查本机命令与版本、校验 Compose 配置，并等待 MySQL、Redis、MinIO、Qdrant 和 RocketMQ 启动。中间件与后端默认只监听 `127.0.0.1`，不会直接暴露到局域网；远程部署时再显式修改 `SERVER_ADDRESS` 并配置反向代理。
+Compose 包含前端、后端及 MySQL、Redis、MinIO、Qdrant、RocketMQ，前端经 Nginx 代理文档和学习接口。后端镜像包含文档 OCR 所需 Tesseract 与中文语言包。
 
-### 3. 启动后端
+- 工作台：`http://localhost:5173`
+- 后端健康检查：`http://localhost:9090/health`
+- MinIO 控制台：`http://localhost:9001`
+
+查看启动状态与日志：
+
+```bash
+docker compose --env-file .env ps
+docker compose --env-file .env logs -f server
+```
+
+仓库也提供 `./scripts/dev-up.sh` 配置检查脚本。该脚本当前会启动整个 Compose，包括前后端；使用后无需再启动一套本地应用。
+
+#### 方式 B：本地前后端开发
+
+需要 JDK 21、Node.js 22 和 Docker Compose v2。扫描 PDF OCR 还需要本机 `tesseract` 命令及 `chi_sim`、`eng` 语言包；普通文本解析无需 OCR。
+
+只启动中间件，避免与本地应用端口冲突：
+
+```bash
+docker compose --env-file .env up -d mysql redis minio qdrant rmqnamesrv rmqbroker
+```
+
+在项目根目录加载配置并启动后端：
 
 ```bash
 set -a
 source .env
 set +a
-
 cd server
 ./mvnw spring-boot:run
 ```
 
-后端默认地址为 `http://localhost:9090`，启动时会初始化项目所需数据表。另开终端确认服务可用：
+后端通过 Flyway 自动执行 `server/src/main/resources/db/migration/` 中的数据库迁移。另开终端验证：
 
 ```bash
 curl http://localhost:9090/health
 ```
 
-成功时返回 `{"code":0,"message":"success","data":"UP"}`。
+成功响应为 `{"code":0,"message":"success","data":"UP"}`。
 
-### 4. 启动前端
+另开终端，在项目根目录启动前端：
 
 ```bash
-set -a
-source .env
-set +a
-
 cd client
 npm ci
-npm run dev
+VITE_API_BASE_URL=http://localhost:9090 npm run dev
 ```
 
-浏览器访问 `http://localhost:5173`。开发环境默认通过 Vite 代理访问后端；后端地址不同时修改 `VITE_DEV_PROXY_TARGET`，前后端分开部署时再设置 `VITE_API_BASE_URL`。
+访问 `http://localhost:5173`。当前 Vite 代理列表尚未包含 `/documents`、`/learning` 和 `/courses`，因此本地开发使用上述 `VITE_API_BASE_URL` 直接访问后端。默认 CORS 允许 `localhost:5173` 和 `127.0.0.1:5173`；若前端更换端口，需要同步调整 `CORS_ALLOWED_ORIGINS`。
 
-只查看前端 Agent 工作台时，可以打开 `http://localhost:5173/?demo`。Demo 模式使用内置示例数据，不依赖后端服务。
+### 3. 开始学习
+
+1. 注册或登录账户，上传 PDF、Markdown、TXT、DOCX 或 PPTX。
+2. 等待状态变为“可学习”；“可学习 · 关键词检索”表示向量索引降级，仍可使用。
+3. 打开文档，输入学习目标，查看 Agent 讲解和原文证据。
+4. 回答测验，查看诊断并继续下一步；也可切换到文档问答连续追问。
+5. 在今日学习、知识地图、待复习与错题本中查看学习记录。
 
 ### 常见问题
 
 | 现象 | 处理方式 |
 | :--- | :--- |
-| 后端无法连接 MySQL 或 Redis | 运行 `docker compose --env-file .env ps`，确认服务健康且 `.env` 密码一致 |
-| 页面提示无法连接后端 | 先访问 `/health`；再检查 `VITE_DEV_PROXY_TARGET` 或 `VITE_API_BASE_URL` |
-| 视频解析提示命令不存在 | 确认 `ffmpeg`、`tesseract` 可在终端执行，必要时配置 `FFMPEG_DIR`、`OCR_COMMAND` |
-| AI 接口返回 401 或模型不可用 | 检查 `SILICONFLOW_API_KEY` 与模型名称，修改后重启后端 |
-| Maven 提示 `maven-default-http-blocker` | 在 `server` 目录执行 `./mvnw -s .mvn/central-settings.xml spring-boot:run`，临时绕过失效的用户级镜像 |
+| 本地开发登录正常，但文档或学习接口异常 | 使用 `VITE_API_BASE_URL=http://localhost:9090 npm run dev`，并检查后端 CORS |
+| 9090 或 5173 端口已占用 | 检查是否已启动 Compose 的 `server`、`client`；本地开发仅启动中间件 |
+| MySQL 或 Redis 连接失败 | 检查 Compose 状态与 `.env`；修改环境变量不会自动修改已有 MySQL 数据卷中的账户密码 |
+| 文档为 `READY_WITH_WARNINGS` | 检查 Embedding 密钥、模型名称和 Qdrant 配置；当前已降级为关键词检索 |
+| 讲解或问答显示 `FALLBACK` | 检查 LLM 密钥、服务地址、模型名称及后端日志；教学引用校验失败也可能触发降级 |
+| 扫描 PDF 没有可提取文本 | 确认后端运行环境可执行 `tesseract`，且 `tesseract --list-langs` 包含 `chi_sim` 和 `eng` |
+| Maven 提示 `maven-default-http-blocker` | 在 `server` 目录执行 `./mvnw -s .mvn/central-settings.xml spring-boot:run`，使用仓库提供的 Central 配置 |
 
-停止本地中间件：
+停止容器：
 
 ```bash
 docker compose --env-file .env down
 ```
 
-该命令不会删除 `mysql/data`、`redis/data`、`minio/data`、`qdrant/data` 或 RocketMQ 命名卷。需要完全重置时请先备份，再使用 `docker compose --env-file .env down --volumes` 并手动清理这些数据目录。
+数据保存在 Compose 命名卷中，普通 `down` 会保留数据。`down --volumes` 会删除数据库、上传分片、对象存储等持久化卷，执行前应备份。
+
+## 主要接口
+
+除健康检查和注册、登录等公开接口外，业务接口需要 `Authorization: Bearer <token>`。JSON 响应采用 `{ code, message, data }`，SSE 使用事件流。
+
+| 方法 | 路径 | 用途 |
+| :--- | :--- | :--- |
+| GET | `/documents` | 当前用户文档列表 |
+| POST | `/documents/init-upload` | 创建或恢复分片上传会话 |
+| GET | `/documents/upload-status` | 查询已上传分片 |
+| POST | `/documents/upload-chunk` | 上传分片 |
+| POST | `/documents/complete-upload` | 校验合并并提交解析 |
+| GET | `/documents/{id}/content` | 获取结构化原文分块 |
+| GET | `/documents/{id}/process-events` | 订阅文档处理进度 |
+| POST | `/documents/{id}/process` | 重新提交处理任务 |
+| POST | `/documents/{id}/questions` | 文档问答与连续追问 |
+| POST | `/learning/sessions` | 创建学习会话 |
+| POST | `/learning/sessions/{id}/answers` | 提交测验答案 |
+| POST | `/learning/sessions/{id}/next` | 执行下一步教学 |
+| GET | `/learning/sessions/{id}/events` | 学习阶段事件流 |
+| GET | `/learning/dashboard` | 学习看板 |
+| GET | `/learning/knowledge-map` | 知识点掌握状态 |
+| GET | `/learning/review-items` | 待复习条目 |
+| GET | `/learning/wrong-answers` | 错题记录 |
+| POST | `/courses/{id}/questions` | 课程跨文档问答 |
+
+## 验证与测试
+
+前端测试与构建：
+
+```bash
+cd client
+npm test
+npm run build
+```
+
+后端测试（JDK 21）：
+
+```bash
+cd server
+./mvnw test
+```
+
+仅验证双层学习闭环：
+
+```bash
+cd server
+./mvnw -Dtest=LearningLoopPolicyTest,LearningSessionServiceTest test
+```
+
+## 当前边界与历史兼容
+
+- DOCX 当前提取正文段落，PPTX 当前提取文本形状；复杂表格、图片和版式没有完整还原。
+- PDF OCR 为低文本页的补充识别，结果受扫描质量和语言包影响。
+- 仓库中的界面截图主要来自历史视频工作台，未作为当前文档界面的预览展示；当前 `App.vue` 未接入旧版 `?demo` 工作台。
+- 视频模块保留分片上传、FFmpeg/ASR/OCR、多模态上下文、混合检索及视频 AgentLoop。运行该链路需另外准备 FFmpeg，在线视频解析还需 yt-dlp；当前后端镜像未安装这些工具。
+- Compose Broker 当前向客户端通告 `127.0.0.1`，与后端同在容器内运行时需留意 RocketMQ 客户端连接日志；容器内任务投递失败会触发本地异步降级。要验证完整 MQ 链路，可使用本地后端连接中间件，或按部署网络调整 Broker 通告地址。
 
 ## 目录结构
 
 ```text
-DoVideoAI
-├── client/              # Vue 3 工作台
-├── server/              # Spring Boot API 与 Video Agent
-├── rocketmq/            # Broker 配置
-├── docker-compose.yml   # 中间件编排
-└── .env.example         # 本地配置模板
+KnowledgeLoop-main/
+├── client/                       # Vue 文档学习工作台、上传与事件处理
+│   ├── src/
+│   ├── Dockerfile
+│   └── nginx.conf                # 容器前端与 API/SSE 代理
+├── server/                       # Spring Boot API
+│   ├── src/main/java/            # 文档解析、检索、学习 Agent 与历史视频模块
+│   ├── src/main/resources/
+│   │   └── db/migration/         # Flyway 数据库迁移
+│   ├── src/test/                 # 后端回归测试
+│   └── Dockerfile
+├── docs/                         # 平台设计、上传实现与历史资料
+├── scripts/dev-up.sh             # 本地配置检查与 Compose 启动
+├── rocketmq/                     # 历史 Broker 配置
+├── docker-compose.yml            # 应用与中间件编排
+├── .env.example                  # 环境变量模板
+└── LICENSE
 ```
+
+## 相关文档
+
+- [长文档学习平台设计](docs/long-document-learning-platform-design.md)：平台架构与阶段规划，实际完成情况以当前代码为准。
+- [文档断点续传实现说明](docs/document-resumable-upload.md)：上传协议、校验和持久化设计。
 
 ## License
 
 本项目基于 [MIT License](LICENSE) 开源。
-
-
-### 文档学习双层 Agent Loop
-
-学习会话通过 `POST /learning/sessions` 创建，通过 `/{id}/answers` 评估答案，
-再通过 `/{id}/next` 执行已选择的教学动作。下一轮必须在当前测验完成后生成。
-
-- Planner 保存有序知识点路径；Tutor 接收计划、上轮诊断和上轮讲解。
-- 内层 Critic 同时检查目标覆盖、语义依据和引用真实性。服务端核验 documentId、chunkId
-  与逐字原文，最多进行三轮生成/修复。仍失败时只展示原文摘录，明确标记 FALLBACK。
-- 外层按用户、文档、稳定知识点键读取及更新掌握度。充分正确加 0.30，基本正确加 0.15，
-  概念错误减 0.20，其他错误减 0.10，结果限制在 0–1；不接受模型自行指定的掌握度或完成动作。
-- 未达到 0.80 时重讲；基础缺失时选择未掌握的前置知识，补完后返回原知识点。
-  前置补充最多嵌套三层，并避免返回链中的循环。达到阈值后才推进路径，路径及返回链均完成才结束。
-- 路径、前置返回链和最新计划保存在现有 state_json 中，无需新增数据库迁移。
-  旧会话没有路径字段时仍可读取，按原当前知识点继续学习。
-- FALLBACK 中的规则评分只做文本重合匹配，不能替代模型的语义诊断。
-
-回归验证（JDK 21）：`cd server && ./mvnw -Dtest=LearningLoopPolicyTest,LearningSessionServiceTest test`。
-此处“自进化”指根据测验反馈调整学习状态和教学策略，不包含模型参数训练。
