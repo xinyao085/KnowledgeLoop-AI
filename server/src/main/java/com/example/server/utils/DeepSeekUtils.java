@@ -36,6 +36,7 @@ import java.util.concurrent.TimeoutException;
 
 @Component
 public class DeepSeekUtils {
+    private final com.example.server.ratelimit.RequestQuotaService quotas;
 
     private static final int MAX_MODEL_ATTEMPTS = 3;
     private static final int MAX_CAUSE_DEPTH = 8;
@@ -179,7 +180,8 @@ public class DeepSeekUtils {
                          @Value("${agent.budget.max-estimated-cost:0}") double maxEstimatedCost,
                          AgentTelemetry telemetry,
                          ObjectMapper objectMapper,
-                         @Qualifier("modelCallExecutor") ThreadPoolTaskExecutor modelCallExecutor) {
+                         @Qualifier("modelCallExecutor") ThreadPoolTaskExecutor modelCallExecutor, com.example.server.ratelimit.RequestQuotaService quotas) {
+        this.quotas = quotas;
         if (timeoutSeconds < 1) {
             throw new IllegalArgumentException("模型超时时间必须大于 0");
         }
@@ -540,9 +542,11 @@ public class DeepSeekUtils {
         long timeoutMs = Math.min(modelTimeoutMs, remainingBudgetMs);
         Future<String> future;
         try {
-            future = modelCallExecutor.submit(() -> chatModel.chat(
-                    SystemMessage.from(SYSTEM_POLICY),
-                    UserMessage.from(prompt)).aiMessage().text());
+            future = modelCallExecutor.submit(() -> {
+                try (var permit = quotas.model("llm")) {
+                    return chatModel.chat(SystemMessage.from(SYSTEM_POLICY), UserMessage.from(prompt)).aiMessage().text();
+                }
+            });
         } catch (RejectedExecutionException e) {
             throw new RetriableException("模型调用线程池繁忙", e);
         }

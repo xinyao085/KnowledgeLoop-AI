@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 @Component
 public class EmbeddingUtils {
 
+    private final com.example.server.ratelimit.RequestQuotaService quotas;
     private final String apiKey;
     private final String baseUrl;
     private final String model;
@@ -30,7 +31,8 @@ public class EmbeddingUtils {
 
     public EmbeddingUtils(@Value("${ai.embedding.api-key}") String apiKey,
                           @Value("${ai.embedding.base-url}") String baseUrl,
-                          @Value("${ai.embedding.model:BAAI/bge-m3}") String model) {
+                          @Value("${ai.embedding.model:BAAI/bge-m3}") String model, com.example.server.ratelimit.RequestQuotaService quotas) {
+        this.quotas = quotas;
         this.apiKey = apiKey;
         this.baseUrl = baseUrl.replaceAll("/+$", "");
         this.model = model;
@@ -67,7 +69,7 @@ public class EmbeddingUtils {
                     ))
                     .build();
 
-            try (Response response = client.newCall(request).execute()) {
+            try (var permit = quotas.model("embedding"); Response response = client.newCall(request).execute()) {
                 if (!response.isSuccessful() || response.body() == null) {
                     if (response.code() == 429 || response.code() >= 500)
                         throw new java.io.IOException("Embedding API temporarily unavailable: " + response.code());
