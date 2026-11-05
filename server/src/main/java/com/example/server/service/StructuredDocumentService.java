@@ -14,6 +14,7 @@ import java.util.concurrent.*;
 
 @Service
 public class StructuredDocumentService {
+    private final com.example.server.ratelimit.RequestQuotaService quotas;
     private final DocumentParsingService legacy;
     private final MineruDocumentParser mineru;
     private final DocumentParseStateMapper states;
@@ -30,7 +31,8 @@ public class StructuredDocumentService {
             @Value("${ai.vision.api-key:}") String key,
             @Value("${ai.vision.base-url:https://api.openai.com/v1}") String base,
             @Value("${ai.vision.model:gpt-4.1-mini}") String model,
-            @Value("${ai.vision.concurrency:2}") int concurrency) {
+            @Value("${ai.vision.concurrency:2}") int concurrency, com.example.server.ratelimit.RequestQuotaService quotas) {
+        this.quotas=quotas;
         this.legacy=legacy;this.mineru=mineru;this.states=states;this.json=json;this.minio=minio;
         this.executor=executor;this.provider=provider;this.key=key;this.base=base.replaceAll("/+$","");
         this.model=model;this.concurrency=concurrency;
@@ -118,7 +120,7 @@ public class StructuredDocumentService {
                     Map.of("type","text","text",prompt),Map.of("type","image_url","image_url",Map.of("url",data))))));
             Request request=new Request.Builder().url(base+"/chat/completions").header("Authorization","Bearer "+key)
                     .post(RequestBody.create(json.writeValueAsBytes(body),MediaType.get("application/json"))).build();
-            try(Response response=http.newCall(request).execute()) {
+            try(var permit=quotas.model("vision"); Response response=http.newCall(request).execute()) {
                 if(!response.isSuccessful()||response.body()==null) throw new IOException("Vision API failed: "+response.code());
                 String text=json.readTree(response.body().byteStream()).path("choices").path(0).path("message").path("content").asText();
                 if(text.isBlank()) throw new IOException("Empty vision result");return text;
