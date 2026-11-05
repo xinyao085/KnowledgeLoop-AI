@@ -374,6 +374,8 @@ KnowledgeLoop-main/
 
 ## 相关文档
 
+- [长文档异步与多模态处理架构](docs/document-processing-architecture.md)：MinerU 可选接入、图片解释、独立线程池及 MQ 消费边界。
+
 - [长文档学习平台设计](docs/long-document-learning-platform-design.md)：平台架构与阶段规划，实际完成情况以当前代码为准。
 - [文档断点续传实现说明](docs/document-resumable-upload.md)：上传协议、校验和持久化设计。
 

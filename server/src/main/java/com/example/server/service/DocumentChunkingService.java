@@ -21,7 +21,10 @@ public class DocumentChunkingService {
         List<DocumentChunk> chunks = new ArrayList<>();
         int index = 0;
         for (DocumentSegment segment : segments) {
-            String remaining = segment.text().strip();
+            String[] parts = segment.text().split("\\Q[AI 图片解释]\\E", 2);
+            String imageDescription = parts.length > 1 ? parts[1].strip() : null;
+            String remaining = parts[0].strip();
+            if (remaining.isBlank() && !segment.imageRefs().isEmpty()) remaining = "[图片：原文未提供文字图注]";
             while (!remaining.isBlank()) {
                 int cut = chooseCut(remaining);
                 String content = remaining.substring(0, cut).strip();
@@ -35,7 +38,10 @@ public class DocumentChunkingService {
                 chunk.setLineStart(segment.lineStart());
                 chunk.setLineEnd(segment.lineEnd());
                 chunk.setContent(content);
+                chunk.setImageDescription(imageDescription);
                 chunk.setSummary(content.length() > 180 ? content.substring(0, 180) + "…" : content);
+                try { chunk.setImageRefsJson(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(segment.imageRefs())); }
+                catch (com.fasterxml.jackson.core.JsonProcessingException e) { throw new IllegalStateException(e); }
                 chunk.setKeywordsJson("[]");
                 chunk.setContentHash(sha256(content));
                 chunk.setEmbeddingVersion(1);

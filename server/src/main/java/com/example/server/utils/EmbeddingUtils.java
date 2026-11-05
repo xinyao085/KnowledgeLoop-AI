@@ -23,6 +23,7 @@ public class EmbeddingUtils {
     private final String model;
 
     private final OkHttpClient client = new OkHttpClient.Builder()
+            .callTimeout(120, TimeUnit.SECONDS)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(120, TimeUnit.SECONDS)
             .build();
@@ -36,6 +37,20 @@ public class EmbeddingUtils {
     }
 
     public List<Double> embed(String text) {
+        for (int attempt = 0; ; attempt++) {
+            try { return embedOnce(text); }
+            catch (IllegalStateException e) {
+                if (attempt >= 1 || !(e.getCause() instanceof java.io.IOException)) throw e;
+                try { Thread.sleep(500); }
+                catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Embedding retry interrupted", interrupted);
+                }
+            }
+        }
+    }
+
+    private List<Double> embedOnce(String text) {
         if (text == null || text.isBlank()) return List.of();
         if (apiKey == null || apiKey.isBlank()) throw new IllegalStateException("Embedding API key is not configured");
         try {
@@ -54,6 +69,8 @@ public class EmbeddingUtils {
 
             try (Response response = client.newCall(request).execute()) {
                 if (!response.isSuccessful() || response.body() == null) {
+                    if (response.code() == 429 || response.code() >= 500)
+                        throw new java.io.IOException("Embedding API temporarily unavailable: " + response.code());
                     throw new IllegalStateException("Embedding API failed: " + response.code());
                 }
                 JSONObject json = JSON.parseObject(response.body().string());

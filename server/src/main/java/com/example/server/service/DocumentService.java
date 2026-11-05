@@ -20,13 +20,17 @@ public class DocumentService {
     private final DocumentChunkMapper chunkMapper;
     private final MinioUtils minioUtils;
     private final QdrantVectorStore vectorStore;
+    private final StructuredDocumentService structured;
+    private final org.redisson.api.RedissonClient redis;
 
     public DocumentService(DocumentMapper documentMapper, DocumentChunkMapper chunkMapper, MinioUtils minioUtils,
-                           QdrantVectorStore vectorStore) {
+                           QdrantVectorStore vectorStore, StructuredDocumentService structured, org.redisson.api.RedissonClient redis) {
         this.documentMapper = documentMapper;
         this.chunkMapper = chunkMapper;
         this.minioUtils = minioUtils;
         this.vectorStore = vectorStore;
+        this.structured = structured;
+        this.redis = redis;
     }
 
     public String normalizeFilename(String filename) {
@@ -57,9 +61,34 @@ public class DocumentService {
                 .eq(DocumentChunk::getDocumentId, id).orderByAsc(DocumentChunk::getId));
     }
 
+    public Document queueForProcessing(Long id, Long userId) {
+        Document document = requireOwned(id, userId);
+        var lock = redis.getLock("document:processing:" + id);
+        if (!lock.tryLock()) throw new IllegalStateException("文档正在处理中");
+        try {
+            document.setStatus("QUEUED");
+            document.setUpdatedAt(java.time.LocalDateTime.now());
+            documentMapper.updateById(document);
+            return document;
+        } finally { lock.unlock(); }
+    }
+
+    public byte[] image(Long id, Long userId, String source) throws Exception {
+        requireOwned(id, userId);
+        return structured.image(id, source);
+    }
+
     public void delete(Long id, Long userId) {
+        requireOwned(id, userId);
+        var lock = redis.getLock("document:processing:" + id);
+        if (!lock.tryLock()) throw new IllegalStateException("文档正在处理中，请稍后删除");
+        try { deleteLocked(id, userId); } finally { lock.unlock(); }
+    }
+
+    private void deleteLocked(Long id, Long userId) {
         Document document = requireOwned(id, userId);
         chunkMapper.delete(new LambdaQueryWrapper<DocumentChunk>().eq(DocumentChunk::getDocumentId, id));
+        structured.delete(id);
         documentMapper.deleteById(id);
         vectorStore.deleteDocument(id);
         long references = documentMapper.selectCount(new LambdaQueryWrapper<Document>()

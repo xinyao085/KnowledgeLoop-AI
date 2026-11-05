@@ -1,0 +1,8 @@
+CREATE TABLE document_parse_states (
+ document_id BIGINT NOT NULL PRIMARY KEY,
+ context_json LONGTEXT NOT NULL,
+ updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+ALTER TABLE document_chunks ADD COLUMN image_refs_json TEXT NULL;
+ALTER TABLE document_chunks ADD COLUMN image_description LONGTEXT NULL;

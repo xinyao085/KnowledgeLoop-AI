@@ -20,6 +20,8 @@ public class DocumentChunk {
     private Integer lineEnd;
     private String content;
     private String summary;
+    private String imageRefsJson;
+    private String imageDescription;
     private String keywordsJson;
     private String contentHash;
     private Integer embeddingVersion;

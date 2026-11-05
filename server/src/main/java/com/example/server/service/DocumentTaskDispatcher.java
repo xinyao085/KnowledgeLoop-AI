@@ -9,8 +9,8 @@ import org.springframework.stereotype.Service;
 @Service
 public class DocumentTaskDispatcher {
     public static final String TOPIC="document-processing-topic";
-    private final RocketMQTemplate rocketMQ; private final DocumentProcessingService fallback;
-    public DocumentTaskDispatcher(RocketMQTemplate rocketMQ,DocumentProcessingService fallback){this.rocketMQ=rocketMQ;this.fallback=fallback;}
+    private final RocketMQTemplate rocketMQ; private final LocalDocumentTaskService fallback;
+    public DocumentTaskDispatcher(RocketMQTemplate rocketMQ,LocalDocumentTaskService fallback){this.rocketMQ=rocketMQ;this.fallback=fallback;}
     public void dispatch(Long documentId){
         try{rocketMQ.asyncSend(TOPIC,new DocumentTaskMessage(documentId),new SendCallback(){
             public void onSuccess(SendResult result) { }
