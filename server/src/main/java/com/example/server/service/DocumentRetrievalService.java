@@ -7,6 +7,9 @@ import com.example.server.utils.EmbeddingUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import java.util.concurrent.*;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -18,24 +21,53 @@ public class DocumentRetrievalService {
     private final EmbeddingUtils embeddingUtils;
     private final QdrantVectorStore vectorStore;
 
+    private final Executor embeddingExecutor;
+    private final int batchSize;
+    private final long batchTimeoutSeconds;
+
     public DocumentRetrievalService(DocumentChunkMapper chunkMapper, EmbeddingUtils embeddingUtils,
-                                    QdrantVectorStore vectorStore) {
+                                    QdrantVectorStore vectorStore,
+                                    @Qualifier("embeddingExecutor") Executor embeddingExecutor,
+                                    @Value("${ai.embedding.index.concurrency:3}") int batchSize,
+                                    @Value("${ai.embedding.index.batch-timeout-seconds:300}") long batchTimeoutSeconds) {
         this.chunkMapper = chunkMapper;
         this.embeddingUtils = embeddingUtils;
         this.vectorStore = vectorStore;
+        this.embeddingExecutor = embeddingExecutor;
+        if (batchSize < 1 || batchTimeoutSeconds < 1) throw new IllegalArgumentException("Invalid embedding batch limits");
+        this.batchSize = batchSize;
+        this.batchTimeoutSeconds = batchTimeoutSeconds;
     }
 
     public boolean index(Long documentId, List<DocumentChunk> chunks) {
+        List<CompletableFuture<QdrantVectorStore.DocumentVector>> pending = new ArrayList<>();
         try {
-            List<QdrantVectorStore.DocumentVector> vectors = chunks.stream()
-                    .map(chunk -> new QdrantVectorStore.DocumentVector(chunk,
-                            embeddingUtils.embed(indexText(chunk))))
-                    .toList();
+            List<QdrantVectorStore.DocumentVector> vectors = new ArrayList<>(chunks.size());
+            // Only one small batch per document is in flight; never enqueue the entire document.
+            for (int offset = 0; offset < chunks.size(); offset += batchSize) {
+                pending.clear();
+                for (DocumentChunk chunk : chunks.subList(offset, Math.min(offset + batchSize, chunks.size()))) {
+                    pending.add(CompletableFuture.supplyAsync(() ->
+                            new QdrantVectorStore.DocumentVector(chunk, embeddingUtils.embed(indexText(chunk))),
+                            embeddingExecutor));
+                }
+                CompletableFuture.allOf(pending.toArray(CompletableFuture[]::new))
+                        .get(batchTimeoutSeconds, TimeUnit.SECONDS);
+                for (var future : pending) vectors.add(future.join());
+            }
+            // Publish only after every chunk has an embedding.
             vectorStore.upsertDocument(documentId, vectors);
             return true;
-        } catch (RuntimeException e) {
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("document_vector_index_interrupted documentId={}", documentId, e);
+            return false;
+        } catch (ExecutionException | TimeoutException | RuntimeException e) {
             log.warn("document_vector_index_fallback documentId={}", documentId, e);
             return false;
+        } finally {
+            // Cancellation prevents queued suppliers from starting; running HTTP calls have their own deadline.
+            pending.forEach(future -> future.cancel(true));
         }
     }
 
@@ -81,7 +113,8 @@ public class DocumentRetrievalService {
 
     private String indexText(DocumentChunk chunk) {
         return String.join("\n", Objects.toString(chunk.getHeadingPath(), ""),
-                Objects.toString(chunk.getSummary(), ""), Objects.toString(chunk.getContent(), ""));
+                Objects.toString(chunk.getSummary(), ""), Objects.toString(chunk.getContent(), ""),
+                Objects.toString(chunk.getImageDescription(), ""));
     }
 
     private String normalize(String value) {

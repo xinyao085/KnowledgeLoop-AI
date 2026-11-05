@@ -1,18 +1,15 @@
 package com.example.server.service;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.example.server.dto.DocumentContext;
 import com.example.server.dto.DocumentSegment;
 import com.example.server.entity.Document;
 import com.example.server.entity.DocumentChunk;
-import com.example.server.mapper.DocumentChunkMapper;
 import com.example.server.mapper.DocumentMapper;
 import com.example.server.mapper.DocumentCheckpointMapper;
 import com.example.server.utils.MinioUtils;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.io.OutputStream;
@@ -26,60 +23,70 @@ import java.util.List;
 public class DocumentProcessingService {
     private static final Logger log = LoggerFactory.getLogger(DocumentProcessingService.class);
     private final DocumentMapper documentMapper;
-    private final DocumentChunkMapper chunkMapper;
-    private final DocumentParsingService parsingService;
     private final DocumentChunkingService chunkingService;
     private final MinioUtils minioUtils;
     private final ObjectMapper objectMapper;
     private final DocumentRetrievalService retrievalService;
     private final DocumentCheckpointMapper checkpointMapper;
     private final DocumentEventService eventService;
+    private final DocumentChunkPersistenceService chunkPersistence;
+    private final StructuredDocumentService structured;
+    private final java.util.concurrent.Executor branches;
 
-    public DocumentProcessingService(DocumentMapper documentMapper, DocumentChunkMapper chunkMapper,
-                                     DocumentParsingService parsingService, DocumentChunkingService chunkingService,
+    public DocumentProcessingService(DocumentMapper documentMapper,
+                                     DocumentChunkingService chunkingService,
                                      MinioUtils minioUtils, ObjectMapper objectMapper,
                                      DocumentRetrievalService retrievalService, DocumentCheckpointMapper checkpointMapper,
-                                     DocumentEventService eventService) {
+                                     DocumentEventService eventService, DocumentChunkPersistenceService chunkPersistence,
+                                     StructuredDocumentService structured,
+                                     @org.springframework.beans.factory.annotation.Qualifier("documentBranchExecutor") java.util.concurrent.Executor branches) {
         this.documentMapper = documentMapper;
-        this.chunkMapper = chunkMapper;
-        this.parsingService = parsingService;
         this.chunkingService = chunkingService;
         this.minioUtils = minioUtils;
         this.objectMapper = objectMapper;
         this.retrievalService = retrievalService;
         this.checkpointMapper = checkpointMapper;
         this.eventService = eventService;
+        this.chunkPersistence = chunkPersistence;
+        this.structured = structured;
+        this.branches = branches;
     }
 
-    @Async("documentTaskExecutor")
     public void process(Long documentId) {
         Document document = documentMapper.selectById(documentId);
-        if (document == null) return;
+        if (document == null || "READY".equals(document.getStatus())) return;
         Path temporary = null;
         try {
-            List<DocumentChunk> existingChunks = chunkMapper.selectList(new LambdaQueryWrapper<DocumentChunk>()
-                    .eq(DocumentChunk::getDocumentId, documentId));
-            if (!existingChunks.isEmpty()) {
-                updateStatus(document, "EMBEDDING", "已从分块 Checkpoint 恢复，跳过重复解析", 75);
-                boolean indexed = retrievalService.index(documentId, existingChunks);
-                updateStatus(document, indexed ? "READY" : "READY_WITH_WARNINGS",
-                        indexed ? null : "向量索引暂不可用，已启用关键词检索降级", 100);
-                return;
-            }
             updateStatus(document, "EXTRACTING", null, 15);
             temporary = Files.createTempFile("knowledge-loop-document-", suffix(document.getFilename()));
             try (OutputStream output = Files.newOutputStream(temporary)) {
                 minioUtils.copyManagedFileTo(document.getFilePath(), output);
             }
-            DocumentContext context = parsingService.parse(documentId, document.getFilePath(),
+            DocumentContext context = structured.parse(documentId, document.getFilePath(),
                     document.getFilename(), temporary);
             updateStatus(document, "CHUNKING", null, 50);
             List<DocumentChunk> chunks = chunkingService.chunk(documentId, context.segments());
-            chunkMapper.delete(new LambdaQueryWrapper<DocumentChunk>().eq(DocumentChunk::getDocumentId, documentId));
-            chunks.forEach(chunkMapper::insert);
+            chunkPersistence.replace(documentId, chunks);
 
             updateStatus(document, "EMBEDDING", null, 75);
-            boolean indexed = retrievalService.index(documentId, chunks);
+            java.util.concurrent.CompletableFuture<DocumentContext> images = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try { return structured.enrich(context); }
+                catch (Exception e) { throw new java.util.concurrent.CompletionException(e); }
+            }, branches);
+            boolean indexed;
+            DocumentContext enriched;
+            try {
+                indexed = retrievalService.index(documentId, chunks);
+                enriched = images.get(30, java.util.concurrent.TimeUnit.MINUTES);
+            } finally { images.cancel(true); }
+            if (!enriched.equals(context)) {
+                chunks = chunkingService.chunk(documentId, enriched.segments());
+                chunkPersistence.replace(documentId, chunks);
+                boolean imageIndexReady = retrievalService.index(documentId,
+                        chunks.stream().filter(chunk -> chunk.getImageDescription() != null).toList());
+                indexed = indexed && imageIndexReady;
+            }
+            boolean imagesIncomplete = structured.hasPendingImages(enriched);
 
             document.setTitle(context.title());
             document.setPageCount(context.type().name().equals("PDF")
@@ -88,11 +95,13 @@ public class DocumentProcessingService {
             document.setOutlineJson(objectMapper.writeValueAsString(context.segments().stream()
                     .map(DocumentSegment::headingPath).filter(value -> value != null && !value.isBlank())
                     .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new))));
-            updateStatus(document, indexed ? "READY" : "READY_WITH_WARNINGS",
-                    indexed ? null : "向量索引暂不可用，已启用关键词检索降级", 100);
+            updateStatus(document, indexed && !imagesIncomplete ? "READY" : "READY_WITH_WARNINGS",
+                    !indexed ? "向量索引暂不可用，已启用关键词检索降级" : imagesIncomplete ? "部分图片尚未完成语义解释，可重新处理重试" : null, 100);
         } catch (Exception e) {
             log.error("document_processing_failed documentId={}", documentId, e);
             updateStatus(document, "FAILED", safeMessage(e), 100);
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            throw new IllegalStateException("Document processing failed: " + documentId, e);
         } finally {
             if (temporary != null) try { Files.deleteIfExists(temporary); } catch (Exception ignored) { }
         }

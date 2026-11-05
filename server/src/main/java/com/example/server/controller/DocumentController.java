@@ -51,6 +51,13 @@ public class DocumentController {
         this.chunkUploads = chunkUploads;
     }
 
+    @GetMapping(value="/{id}/images", produces=MediaType.IMAGE_PNG_VALUE)
+    public ResponseEntity<byte[]> image(@PathVariable Long id, @RequestParam String source,
+            @RequestAttribute(AuthService.REQUEST_USER_ID) Long userId) throws Exception {
+        return ResponseEntity.ok().header("Cache-Control", "private, no-store")
+                .contentType(MediaType.IMAGE_PNG).body(documentService.image(id,userId,source));
+    }
+
     @PostMapping("/init-upload")
     public Result<java.util.Map<String,Object>> initUpload(@Valid @RequestBody InitUploadRequest request,
             @RequestAttribute(AuthService.REQUEST_USER_ID) Long userId) throws Exception {
@@ -128,7 +135,7 @@ public class DocumentController {
     @PostMapping("/{id}/process")
     public ResponseEntity<Result<DocumentSummary>> process(@PathVariable Long id,
             @RequestAttribute(AuthService.REQUEST_USER_ID) Long userId) {
-        Document document = documentService.requireOwned(id, userId);
+        Document document = documentService.queueForProcessing(id, userId);
         taskDispatcher.dispatch(id);
         return ResponseEntity.accepted().body(Result.ok(DocumentSummary.from(document)));
     }

@@ -35,7 +35,7 @@
     <div v-if="selected" class="drawer-backdrop" @click.self="selected = null"><section class="drawer"><button class="drawer-close" @click="selected = null">×</button><p class="eyebrow">DOCUMENT READER</p><h2>{{ selected.title || selected.filename }}</h2><p class="drawer-meta">{{ stateLabel(selected.status) }} · {{ selected.filename }}</p>
       <div v-if="loadingContent" class="reader-empty">正在读取结构化原文…</div><div v-else-if="!isReady(selected)" class="reader-empty">文档正在后台解析，完成后即可开始学习。</div>
       <div v-else class="workspace-tabs"><button :class="{active:drawerMode==='learn'}" @click="drawerMode='learn'">Learning Agent</button><button :class="{active:drawerMode==='ask'}" @click="drawerMode='ask'">连续问答</button><button :class="{active:drawerMode==='read'}" @click="drawerMode='read'">阅读原文</button></div>
-      <div v-if="isReady(selected) && drawerMode==='read'" class="reader"><aside><strong>章节与位置</strong><button v-for="chunk in chunks" :key="chunk.id" @click="activeChunk = chunk">{{ locator(chunk) }}</button></aside><article v-if="activeChunk"><span class="citation">{{ locator(activeChunk) }}</span><h3>{{ activeChunk.headingPath || '原文内容' }}</h3><p>{{ activeChunk.content }}</p></article></div>
+      <div v-if="isReady(selected) && drawerMode==='read'" class="reader"><aside><strong>章节与位置</strong><button v-for="chunk in chunks" :key="chunk.id" @click="activeChunk = chunk">{{ locator(chunk) }}</button></aside><article v-if="activeChunk"><span class="citation">{{ locator(activeChunk) }}</span><h3>{{ activeChunk.headingPath || '原文内容' }}</h3><p>{{ activeChunk.content }}</p><section v-if="activeChunk.imageDescription"><h4>AI 图片解释</h4><p>{{ activeChunk.imageDescription }}</p></section><figure v-for="image in chunkImages" :key="image"><img :src="image" alt="教材原图" style="max-width:100%;height:auto" /><figcaption>教材原图，图片解释为 AI 生成，请结合原图核对。</figcaption></figure><p v-if="imageError">{{ imageError }}</p></article></div>
       <div v-if="isReady(selected) && drawerMode==='learn'" class="learning-panel">
         <form v-if="!learning" class="learning-start" @submit.prevent="startLearning"><h3>这次想学会什么？</h3><p>Agent 会检索教材原文，先讲解，再用一道题检查掌握情况。</p><textarea v-model="learningGoal" required maxlength="1000" placeholder="例如：理解本章核心概念，并能用自己的话解释"></textarea><button class="primary" :disabled="learningBusy">{{ learningBusy?'正在准备学习材料…':'开始学习' }}</button></form>
         <template v-else>
@@ -56,10 +56,29 @@
   </div>
 </template>
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { uploadDocument } from './documentUpload.js'
 import { apiRequest, clearAuthToken, hasAuthToken, setAuthToken } from './api'
 const documents=ref([]),query=ref(''),selected=ref(null),chunks=ref([]),activeChunk=ref(null),drawerMode=ref('learn')
+const chunkImages=ref([]),imageError=ref('')
+watch(activeChunk, async (chunk, previous, onCleanup) => {
+  let cancelled=false
+  const urls=[]
+  onCleanup(()=>{cancelled=true;urls.forEach(url=>URL.revokeObjectURL(url))})
+  chunkImages.value=[];imageError.value=''
+  let sources=[]
+  try { sources=JSON.parse(chunk?.imageRefsJson || '[]') } catch { return }
+  const documentId=selected.value?.id
+  for(const source of sources){
+    try {
+      const response=await apiRequest(`/documents/${documentId}/images?source=${encodeURIComponent(source)}`)
+      if(!response.ok)throw new Error('图片加载失败')
+      const blob=await response.blob()
+      if(cancelled)return
+      urls.push(URL.createObjectURL(blob));chunkImages.value=[...urls]
+    } catch { if(!cancelled)imageError.value='部分图片加载失败，请稍后重新打开文档。' }
+  }
+})
 const learning=ref(null),learningGoal=ref(''),learningAnswer=ref(''),learningBusy=ref(false)
 const liveAgentMessage=ref('')
 const activeView=ref('documents'),dashboard=ref(null),chat=ref([]),question=ref(''),asking=ref(false),conversationId=ref(''),uploadProgress=ref(0),uploadPhase=ref('uploading')
@@ -107,7 +126,7 @@ async function removeDocument(doc){if(!window.confirm(`删除“${doc.title||doc
 async function authenticate(){authBusy.value=true;try{const response=await apiRequest(`/user/${authMode.value}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(auth.value)});if(!response.ok)throw new Error(await response.text()||'请求失败');const data=await response.json();setAuthToken(data.token);user.value=data.userInfo;localStorage.setItem('knowledgeLoopUser',JSON.stringify(user.value));showAuth.value=false;await loadDocuments()}catch(error){flash(error.message,true)}finally{authBusy.value=false}}
 async function logout(){uploadAbort?.abort();try{await apiRequest('/user/logout',{method:'POST'})}finally{clearAuthToken();localStorage.removeItem('knowledgeLoopUser');user.value=null;documents.value=[];dashboard.value=null;activeView.value='documents'}}
 const isReady=doc=>['READY','READY_WITH_WARNINGS'].includes(doc?.status)
-const typeLabel=type=>({PDF:'PDF 教材',DOCX:'Word 文档',PPTX:'演示文稿',TXT:'纯文本',MARKDOWN:'Markdown'}[type]||type),stateLabel=state=>({QUEUED:'等待处理',EXTRACTING:'正在解析',CHUNKING:'正在分块',EMBEDDING:'正在建立索引',READY:'可学习',READY_WITH_WARNINGS:'可学习 · 关键词检索',FAILED:'解析失败'}[state]||state),stateClass=state=>isReady({status:state})?'ready':state==='FAILED'?'failed':'working'
+const typeLabel=type=>({PDF:'PDF 教材',DOCX:'Word 文档',PPTX:'演示文稿',TXT:'纯文本',MARKDOWN:'Markdown'}[type]||type),stateLabel=state=>({QUEUED:'等待处理',EXTRACTING:'正在解析',CHUNKING:'正在分块',EMBEDDING:'正在建立索引',READY:'可学习',READY_WITH_WARNINGS:'可学习 · 部分功能降级',FAILED:'解析失败'}[state]||state),stateClass=state=>isReady({status:state})?'ready':state==='FAILED'?'failed':'working'
 const locator=chunk=>chunk.pageNumber?`第 ${chunk.pageNumber} 页`:chunk.headingPath||(chunk.lineStart?`第 ${chunk.lineStart}–${chunk.lineEnd} 行`:'原文块')
 const executionLabel=mode=>({AI:'AI 模型运行',FALLBACK:'规则兜底',UNKNOWN:'历史会话'}[mode]||mode||'状态未知')
 const actionLabel=action=>({EVALUATE:'等待回答',RETEACH:'重讲薄弱点',REVIEW_PREREQUISITE:'补充前置知识',ADVANCE:'进入下一层',COMPLETE:'完成目标'}[action]||action)

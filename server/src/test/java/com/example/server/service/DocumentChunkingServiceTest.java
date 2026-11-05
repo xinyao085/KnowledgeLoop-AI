@@ -12,6 +12,16 @@ class DocumentChunkingServiceTest {
     private final DocumentChunkingService service = new DocumentChunkingService();
 
     @Test
+    void keepsGeneratedImageInterpretationOutsideOriginalEvidence() {
+        var segment = new com.example.server.dto.DocumentSegment("figure-1", "chapter", 1, null,
+                null, null, null, "原文图注\n[AI 图片解释] 模块 A 调用模块 B", java.util.List.of("image.png"), java.util.List.of());
+        var chunks = new DocumentChunkingService().chunk(1L, java.util.List.of(segment));
+        org.assertj.core.api.Assertions.assertThat(chunks.getFirst().getContent()).isEqualTo("原文图注");
+        org.assertj.core.api.Assertions.assertThat(chunks.getFirst().getImageDescription()).isEqualTo("模块 A 调用模块 B");
+        org.assertj.core.api.Assertions.assertThat(chunks.getFirst().getImageRefsJson()).contains("image.png");
+    }
+
+    @Test
     void largeNaturalBlockIsSplitWithStableMetadataAndOverlap() {
         String text = "知识点。".repeat(900);
         DocumentSegment segment = new DocumentSegment("page-3", "第三章", 3, null,
